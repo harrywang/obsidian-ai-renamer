@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-ai-renamer",
+  "name": "AI Renamer",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Auto-rename notes with AI-generated names based on content (timestamp + short title).",
+  "author": "Harry Wang",
+  "isDesktopOnly": false
+}
