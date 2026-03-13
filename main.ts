@@ -256,7 +256,8 @@ this.addSettingTab(new AIRenamerSettingTab(this.app, this));
           `API key not configured. Go to Settings > AI Renamer to select a secret for ${providerConfig.name}.`
         );
       }
-      const secrets = (this.app as any).secretStorage?.secrets;
+      const storage = this.app.secretStorage as unknown as { secrets?: Record<string, string> };
+      const secrets = storage?.secrets;
       if (!secrets) {
         throw new Error(
           "Keychain not available. Requires Obsidian v1.11.0 or later."
@@ -286,8 +287,10 @@ this.addSettingTab(new AIRenamerSettingTab(this.app, this));
       case "ollama":
         raw = await callOllama(ollamaUrl, model, truncated);
         break;
-      default:
-        throw new Error(`Unknown provider: ${provider}`);
+      default: {
+        const _exhaustive: never = provider;
+        throw new Error(`Unknown provider: ${_exhaustive}`);
+      }
     }
 
     return raw.trim().toLowerCase().replace(/\s+/g, "-");
@@ -356,8 +359,9 @@ this.addSettingTab(new AIRenamerSettingTab(this.app, this));
       await this.app.fileManager.renameFile(file, newPath);
       new Notice(`Renamed to "${newName}"`);
       return true;
-    } catch (err: any) {
-      new Notice(`Rename failed for "${file.basename}": ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Rename failed for "${file.basename}": ${message}`);
       console.error("AI Renamer error:", err);
       return false;
     }
@@ -379,7 +383,7 @@ class AIRenamerSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "AI Renamer Settings" });
+    new Setting(containerEl).setName("AI Renamer settings").setHeading();
 
     const currentProvider = this.plugin.settings.provider;
     const providerConfig = PROVIDERS[currentProvider];
@@ -442,7 +446,7 @@ class AIRenamerSettingTab extends PluginSettingTab {
         .setName("Model")
         .setDesc("Loading installed Ollama models...");
 
-      this.loadOllamaModels(modelSetting);
+      void this.loadOllamaModels(modelSetting);
     } else {
       new Setting(containerEl)
         .setName("Model")
@@ -471,8 +475,9 @@ class AIRenamerSettingTab extends PluginSettingTab {
           try {
             const name = await this.plugin.testConnection();
             new Notice(`Test passed! Generated name: "${name}"`);
-          } catch (err: any) {
-            new Notice(`Test failed: ${err.message}`, 10000);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            new Notice(`Test failed: ${message}`, 10000);
           }
           btn.setDisabled(false);
           btn.setButtonText("Test");
