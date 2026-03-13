@@ -17,7 +17,7 @@ An Obsidian plugin that automatically renames notes using AI. It reads the note 
 | Google Gemini | Gemini 2.0 Flash, Gemini 2.5 Pro | Yes |
 | Ollama (local) | Any installed model | No |
 
-For Ollama, the plugin auto-detects installed models. Recommended lightweight models for this task:
+For Ollama, the plugin auto-detects installed models. Recommended lightweight model for this task:
 
 ```bash
 ollama pull llama3.2:1b     # 1.3 GB, fast and capable
