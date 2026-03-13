@@ -37,7 +37,7 @@ ollama pull llama3.2:1b     # 1.3 GB, fast and capable
 ### Option 2: Manual Install
 
 1. Download `main.js` and `manifest.json` from the [latest release](https://github.com/harrywang/obsidian-ai-renamer/releases)
-2. Create `.obsidian/plugins/obsidian-ai-renamer/` in your vault
+2. Create `.obsidian/plugins/ai-renamer/` in your vault
 3. Copy `main.js` and `manifest.json` into that folder
 4. Enable **AI Renamer** in **Settings > Community plugins**
 
