@@ -2,6 +2,8 @@
 
 An Obsidian plugin that automatically renames notes using AI. It reads the note content and generates a short, descriptive filename (e.g., `q4-budget-review-meeting.md`).
 
+![AI Renamer Settings](screenshot.png)
+
 ## Features
 
 - **One-click rename** — wand icon in the sidebar to rename the active note instantly
