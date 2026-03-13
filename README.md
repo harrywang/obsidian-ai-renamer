@@ -1,20 +1,27 @@
 # Obsidian AI Renamer
 
-An Obsidian plugin that automatically renames notes using AI. It reads the note content and generates a descriptive filename in the format `timestamp-short-name` (e.g., `20260312-meeting-notes-q4-review.md`).
+An Obsidian plugin that automatically renames notes using AI. It reads the note content and generates a short, descriptive filename (e.g., `q4-budget-review-meeting.md`).
 
 ## Features
 
-- **Rename current note** — generate an AI-powered name for the active note
-- **Rename all notes** — batch rename every note in your vault (with confirmation)
-- **Timestamp prefix** — configurable date format (YYYYMMDD, YYYYMMDD-HHmm, YYYY-MM-DD)
-- **Smart skipping** — already-renamed files (with date prefix) are skipped during batch rename
-- **Folder exclusion** — skip specific folders (e.g., templates, daily notes)
-- **API key in settings** — password-masked input, stored locally
+- **One-click rename** — wand icon in the sidebar to rename the active note instantly
+- **Multiple AI providers** — OpenAI, Anthropic, Google Gemini, or Ollama (local)
+- **Optional date prefix** — prepend a timestamp (off by default, configurable format)
 
-## Prerequisites
+## Supported Providers
 
-- An [OpenAI API key](https://platform.openai.com/api-keys)
-- Obsidian v0.15.0 or later
+| Provider | Models | API Key Required |
+|----------|--------|:---:|
+| OpenAI | GPT-4o Mini, GPT-4o, GPT-4.1 Nano, GPT-4.1 Mini | Yes |
+| Anthropic | Claude Haiku 4.5, Sonnet 4.6, Opus 4.6 | Yes |
+| Google Gemini | Gemini 2.0 Flash, Gemini 2.5 Pro | Yes |
+| Ollama (local) | Any installed model | No |
+
+For Ollama, the plugin auto-detects installed models. Recommended lightweight models for this task:
+
+```bash
+ollama pull llama3.2:1b     # 1.3 GB, fast and capable
+```
 
 ## Installation
 
@@ -34,34 +41,49 @@ An Obsidian plugin that automatically renames notes using AI. It reads the note 
 
 ## Setup
 
-1. Go to **Settings > AI Renamer**
-2. Enter your OpenAI API key
-3. Choose your preferred model and date format
+1. Go to **Settings > Keychain** and add your API key as a named secret (e.g., "openai-key")
+2. Go to **Settings > AI Renamer**
+3. Choose your AI provider
+4. Select your secret from the Keychain dropdown (not needed for Ollama)
+5. Pick a model
+6. Optionally enable date prefix
 
-## Commands
+## Usage
 
-| Command | Description |
-|---------|-------------|
-| Rename current note with AI | Renames the active note |
-| Rename all notes in vault with AI | Batch renames all notes (skips already-renamed files) |
+- Click the **wand icon** in the left sidebar to rename the current note
+- Or use the **command palette** (Cmd/Ctrl+P) and search for "AI Renamer"
 
 ## Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| OpenAI API key | — | Your API key (stored locally, never shared) |
-| Model | gpt-4o-mini | AI model to use |
-| Date format | YYYYMMDD | Timestamp prefix style |
-| Max content length | 1000 | Characters sent to AI (saves tokens) |
-| Exclude folders | — | Comma-separated folders to skip |
+| AI provider | OpenAI | Which AI service to use |
+| API key | — | Select a secret from Obsidian's Keychain |
+| Model | GPT-4o Mini | Model for generating names |
+| Ollama URL | localhost:11434 | Local Ollama instance URL (only shown for Ollama) |
+| Add date prefix | Off | Prepend a timestamp to the generated name |
+| Date format | YYYYMMDD | Timestamp style (only shown when date prefix is on) |
+| Max content length | 1000 | Characters sent to AI (saves tokens on long notes) |
 
 ## Example
 
 A note containing meeting minutes about Q4 budget review would be renamed to:
 
 ```
+q4-budget-review-meeting.md
+```
+
+With date prefix enabled:
+
+```
 20260312-q4-budget-review-meeting.md
 ```
+
+## Security
+
+API keys are stored securely using Obsidian's built-in **Keychain** (available since v1.11.0), which uses your OS secure storage (macOS Keychain, Windows Credential Manager, Linux libsecret). Keys are never saved in plain text plugin files.
+
+Requires Obsidian v1.11.0 or later for Keychain support.
 
 ## Development
 

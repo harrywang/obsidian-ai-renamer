@@ -1,35 +1,222 @@
 import {
   App,
-  Modal,
   Notice,
   Plugin,
   PluginSettingTab,
+  SecretComponent,
   Setting,
   TFile,
 } from "obsidian";
 import { requestUrl } from "obsidian";
 
+// ── Provider definitions ───────────────────────────────────
+
+type ProviderID = "openai" | "anthropic" | "google" | "ollama";
+
+interface ProviderConfig {
+  name: string;
+  models: { id: string; label: string }[];
+  apiKeyPlaceholder: string;
+  apiKeyUrl: string;
+  needsApiKey: boolean;
+}
+
+const PROVIDERS: Record<ProviderID, ProviderConfig> = {
+  openai: {
+    name: "OpenAI",
+    models: [
+      { id: "gpt-4o-mini", label: "GPT-4o Mini (fast, cheap)" },
+      { id: "gpt-4o", label: "GPT-4o (smarter)" },
+      { id: "gpt-4.1-nano", label: "GPT-4.1 Nano (fastest)" },
+      { id: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
+    ],
+    apiKeyPlaceholder: "sk-...",
+    apiKeyUrl: "platform.openai.com/api-keys",
+    needsApiKey: true,
+  },
+  anthropic: {
+    name: "Anthropic",
+    models: [
+      { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (fast, cheap)" },
+      { id: "claude-sonnet-4-6-20250514", label: "Claude Sonnet 4.6" },
+      { id: "claude-opus-4-6-20250514", label: "Claude Opus 4.6 (smartest)" },
+    ],
+    apiKeyPlaceholder: "sk-ant-...",
+    apiKeyUrl: "console.anthropic.com/settings/keys",
+    needsApiKey: true,
+  },
+  google: {
+    name: "Google Gemini",
+    models: [
+      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash (fast, cheap)" },
+      { id: "gemini-2.5-pro-preview-05-06", label: "Gemini 2.5 Pro (smartest)" },
+    ],
+    apiKeyPlaceholder: "AI...",
+    apiKeyUrl: "aistudio.google.com/apikey",
+    needsApiKey: true,
+  },
+  ollama: {
+    name: "Ollama (local)",
+    models: [
+      { id: "llama3.2", label: "Llama 3.2" },
+      { id: "mistral", label: "Mistral" },
+      { id: "gemma2", label: "Gemma 2" },
+      { id: "phi3", label: "Phi-3" },
+    ],
+    apiKeyPlaceholder: "",
+    apiKeyUrl: "",
+    needsApiKey: false,
+  },
+};
+
+const SYSTEM_PROMPT =
+  "You are a note naming assistant. Given the content of a note, generate a short, descriptive filename (2-5 words, lowercase, separated by hyphens). Do NOT include a date or file extension. Only output the name, nothing else. Examples: meeting-notes-q4-review, recipe-chocolate-cake, project-alpha-todo";
+
+// ── Provider API calls ─────────────────────────────────────
+
+async function callOpenAI(
+  apiKey: string,
+  model: string,
+  content: string
+): Promise<string> {
+  const response = await requestUrl({
+    url: "https://api.openai.com/v1/responses",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      instructions: SYSTEM_PROMPT,
+      input: `Generate a short filename for this note:\n\n${content}`,
+    }),
+  });
+  const data = response.json;
+  if (data.output_text) return data.output_text;
+  if (data.output?.[0]?.content?.[0]?.text)
+    return data.output[0].content[0].text;
+  throw new Error(`Unexpected response: ${JSON.stringify(data).substring(0, 200)}`);
+}
+
+async function callAnthropic(
+  apiKey: string,
+  model: string,
+  content: string
+): Promise<string> {
+  const response = await requestUrl({
+    url: "https://api.anthropic.com/v1/messages",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 50,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `Generate a short filename for this note:\n\n${content}`,
+        },
+      ],
+    }),
+  });
+  const data = response.json;
+  if (data.content?.[0]?.text) return data.content[0].text;
+  throw new Error(`Unexpected response: ${JSON.stringify(data).substring(0, 200)}`);
+}
+
+async function callGoogle(
+  apiKey: string,
+  model: string,
+  content: string
+): Promise<string> {
+  const response = await requestUrl({
+    url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [
+        {
+          parts: [
+            {
+              text: `Generate a short filename for this note:\n\n${content}`,
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  const data = response.json;
+  if (data.candidates?.[0]?.content?.parts?.[0]?.text)
+    return data.candidates[0].content.parts[0].text;
+  throw new Error(`Unexpected response: ${JSON.stringify(data).substring(0, 200)}`);
+}
+
+async function callOllama(
+  baseUrl: string,
+  model: string,
+  content: string
+): Promise<string> {
+  const response = await requestUrl({
+    url: `${baseUrl}/api/generate`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      system: SYSTEM_PROMPT,
+      prompt: `Generate a short filename for this note:\n\n${content}`,
+      stream: false,
+    }),
+  });
+  const data = response.json;
+  if (data.response) return data.response;
+  throw new Error(`Unexpected response: ${JSON.stringify(data).substring(0, 200)}`);
+}
+
+// ── Settings ───────────────────────────────────────────────
+
 interface AIRenamerSettings {
-  openaiApiKey: string;
+  provider: ProviderID;
+  secretNames: Record<string, string>; // provider -> secret name in Keychain
   model: string;
+  ollamaUrl: string;
+  addDatePrefix: boolean;
   dateFormat: string;
   maxContentLength: number;
-  excludeFolders: string;
 }
 
 const DEFAULT_SETTINGS: AIRenamerSettings = {
-  openaiApiKey: "",
+  provider: "openai",
+  secretNames: {},
   model: "gpt-4o-mini",
+  ollamaUrl: "http://localhost:11434",
+  addDatePrefix: false,
   dateFormat: "YYYYMMDD",
   maxContentLength: 1000,
-  excludeFolders: "",
 };
+
+// ── Plugin ─────────────────────────────────────────────────
 
 export default class AIRenamerPlugin extends Plugin {
   settings: AIRenamerSettings = DEFAULT_SETTINGS;
 
   async onload() {
     await this.loadSettings();
+
+    this.addRibbonIcon("wand", "Rename note with AI", async () => {
+      const file = this.app.workspace.getActiveFile();
+      if (!file) {
+        new Notice("No active note to rename.");
+        return;
+      }
+      await this.renameFile(file);
+    });
 
     this.addCommand({
       id: "rename-current-note",
@@ -44,20 +231,7 @@ export default class AIRenamerPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
-      id: "rename-all-notes",
-      name: "Rename all notes in vault with AI",
-      callback: () => {
-        new ConfirmModal(
-          this.app,
-          "Rename all notes?",
-          "This will rename every Markdown file in your vault using AI. Files that already match the timestamp pattern will be skipped.",
-          async () => await this.renameAll()
-        ).open();
-      },
-    });
-
-    this.addSettingTab(new AIRenamerSettingTab(this.app, this));
+this.addSettingTab(new AIRenamerSettingTab(this.app, this));
   }
 
   async loadSettings() {
@@ -71,49 +245,52 @@ export default class AIRenamerPlugin extends Plugin {
   // ── AI naming ────────────────────────────────────────────
 
   private async generateName(content: string): Promise<string> {
-    const apiKey = this.settings.openaiApiKey;
-    if (!apiKey) {
-      throw new Error(
-        "OpenAI API key not set. Go to Settings > AI Renamer to add it."
-      );
+    const { provider, secretNames, model, ollamaUrl } = this.settings;
+    const providerConfig = PROVIDERS[provider];
+
+    let apiKey = "";
+    if (providerConfig.needsApiKey) {
+      const secretName = secretNames[provider];
+      if (!secretName) {
+        throw new Error(
+          `API key not configured. Go to Settings > AI Renamer to select a secret for ${providerConfig.name}.`
+        );
+      }
+      const secrets = (this.app as any).secretStorage?.secrets;
+      if (!secrets) {
+        throw new Error(
+          "Keychain not available. Requires Obsidian v1.11.0 or later."
+        );
+      }
+      apiKey = secrets[secretName] || "";
+      if (!apiKey) {
+        throw new Error(
+          `Secret "${secretName}" not found in Keychain. Add it in Settings > Keychain, then select it in AI Renamer settings.`
+        );
+      }
     }
 
-    // Truncate content to save tokens
     const truncated = content.substring(0, this.settings.maxContentLength);
+    let raw: string;
 
-    const response = await requestUrl({
-      url: "https://api.openai.com/v1/responses",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: this.settings.model,
-        instructions:
-          "You are a note naming assistant. Given the content of a note, generate a short, descriptive filename (2-5 words, lowercase, separated by hyphens). Do NOT include a date or file extension. Only output the name, nothing else. Examples: meeting-notes-q4-review, recipe-chocolate-cake, project-alpha-todo",
-        input: `Generate a short filename for this note:\n\n${truncated}`,
-      }),
-    });
-
-    const data = response.json;
-
-    // Use the convenience output_text field
-    if (data.output_text) {
-      return data.output_text.trim().toLowerCase().replace(/\s+/g, "-");
+    switch (provider) {
+      case "openai":
+        raw = await callOpenAI(apiKey, model, truncated);
+        break;
+      case "anthropic":
+        raw = await callAnthropic(apiKey, model, truncated);
+        break;
+      case "google":
+        raw = await callGoogle(apiKey, model, truncated);
+        break;
+      case "ollama":
+        raw = await callOllama(ollamaUrl, model, truncated);
+        break;
+      default:
+        throw new Error(`Unknown provider: ${provider}`);
     }
 
-    // Fallback to nested path
-    if (data.output?.[0]?.content?.[0]?.text) {
-      return data.output[0].content[0].text
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, "-");
-    }
-
-    throw new Error(
-      `Unexpected API response: ${JSON.stringify(data).substring(0, 200)}`
-    );
+    return raw.trim().toLowerCase().replace(/\s+/g, "-");
   }
 
   private formatDate(date: Date): string {
@@ -133,17 +310,15 @@ export default class AIRenamerPlugin extends Plugin {
     }
   }
 
-  private isAlreadyRenamed(filename: string): boolean {
-    // Match files that start with a date pattern like 20260312 or 2026-03-12
-    return /^\d{4}-?\d{2}-?\d{2}/.test(filename);
-  }
-
   private sanitizeFilename(name: string): string {
-    // Remove characters that are invalid in filenames
     return name
       .replace(/[\\/:*?"<>|#^[\]]/g, "")
       .replace(/\.+$/, "")
       .trim();
+  }
+
+  async testConnection(): Promise<string> {
+    return await this.generateName("This is a test note about quarterly planning and budget review for 2026.");
   }
 
   async renameFile(file: TFile): Promise<boolean> {
@@ -157,21 +332,22 @@ export default class AIRenamerPlugin extends Plugin {
       new Notice(`Generating name for "${file.basename}"...`);
 
       const shortName = await this.generateName(content);
-      const timestamp = this.formatDate(new Date(file.stat.ctime));
-      const newName = this.sanitizeFilename(`${timestamp}-${shortName}`);
+      let newName: string;
+      if (this.settings.addDatePrefix) {
+        const timestamp = this.formatDate(new Date(file.stat.ctime));
+        newName = this.sanitizeFilename(`${timestamp}-${shortName}`);
+      } else {
+        newName = this.sanitizeFilename(shortName);
+      }
 
       if (newName === file.basename) {
         new Notice(`"${file.basename}" already has a good name.`);
         return false;
       }
 
-      // Build the new path preserving the folder
       const folder = file.parent?.path || "";
-      const newPath = folder
-        ? `${folder}/${newName}.md`
-        : `${newName}.md`;
+      const newPath = folder ? `${folder}/${newName}.md` : `${newName}.md`;
 
-      // Check if target already exists
       if (this.app.vault.getAbstractFileByPath(newPath)) {
         new Notice(`Cannot rename: "${newPath}" already exists.`);
         return false;
@@ -187,92 +363,6 @@ export default class AIRenamerPlugin extends Plugin {
     }
   }
 
-  async renameAll(): Promise<void> {
-    const files = this.app.vault.getMarkdownFiles();
-    const excludes = this.settings.excludeFolders
-      .split(",")
-      .map((f) => f.trim())
-      .filter((f) => f);
-
-    let renamed = 0;
-    let skipped = 0;
-    let failed = 0;
-
-    for (const file of files) {
-      // Skip excluded folders
-      if (excludes.some((ex) => file.path.startsWith(ex))) {
-        skipped++;
-        continue;
-      }
-
-      // Skip already-renamed files
-      if (this.isAlreadyRenamed(file.basename)) {
-        skipped++;
-        continue;
-      }
-
-      const success = await this.renameFile(file);
-      if (success) {
-        renamed++;
-      } else {
-        failed++;
-      }
-
-      // Small delay to avoid rate limiting
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-
-    new Notice(
-      `Done! Renamed: ${renamed}, Skipped: ${skipped}, Failed: ${failed}`,
-      10000
-    );
-  }
-}
-
-// ── Confirm modal ──────────────────────────────────────────
-
-class ConfirmModal extends Modal {
-  title: string;
-  message: string;
-  onConfirm: () => Promise<void>;
-
-  constructor(
-    app: App,
-    title: string,
-    message: string,
-    onConfirm: () => Promise<void>
-  ) {
-    super(app);
-    this.title = title;
-    this.message = message;
-    this.onConfirm = onConfirm;
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.createEl("h2", { text: this.title });
-    contentEl.createEl("p", { text: this.message });
-
-    const btnContainer = contentEl.createDiv({
-      cls: "modal-button-container",
-    });
-
-    const confirmBtn = btnContainer.createEl("button", {
-      text: "Rename All",
-      cls: "mod-cta",
-    });
-    confirmBtn.addEventListener("click", async () => {
-      this.close();
-      await this.onConfirm();
-    });
-
-    const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
-    cancelBtn.addEventListener("click", () => this.close());
-  }
-
-  onClose() {
-    this.contentEl.empty();
-  }
 }
 
 // ── Settings tab ───────────────────────────────────────────
@@ -291,52 +381,138 @@ class AIRenamerSettingTab extends PluginSettingTab {
 
     containerEl.createEl("h2", { text: "AI Renamer Settings" });
 
+    const currentProvider = this.plugin.settings.provider;
+    const providerConfig = PROVIDERS[currentProvider];
+
+    // Provider selector
     new Setting(containerEl)
-      .setName("OpenAI API key")
-      .setDesc("Your OpenAI API key. Get one at platform.openai.com/api-keys")
-      .addText((text) =>
-        text
-          .setPlaceholder("sk-...")
-          .setValue(this.plugin.settings.openaiApiKey)
-          .onChange(async (value) => {
-            this.plugin.settings.openaiApiKey = value.trim();
-            await this.plugin.saveSettings();
-          })
-      )
-      .then((setting) => {
-        const input = setting.controlEl.querySelector("input");
-        if (input) input.type = "password";
+      .setName("AI provider")
+      .setDesc("Choose which AI service to use for generating names.")
+      .addDropdown((dropdown) => {
+        for (const [id, config] of Object.entries(PROVIDERS)) {
+          dropdown.addOption(id, config.name);
+        }
+        dropdown.setValue(currentProvider).onChange(async (value) => {
+          this.plugin.settings.provider = value as ProviderID;
+          // Set default model for the new provider
+          const newProvider = PROVIDERS[value as ProviderID];
+          this.plugin.settings.model = newProvider.models[0].id;
+          await this.plugin.saveSettings();
+          this.display();
+        });
       });
 
+    // API key via Keychain (not for Ollama)
+    if (providerConfig.needsApiKey) {
+      new Setting(containerEl)
+        .setName("API key")
+        .setDesc(
+          `Select a secret from Keychain. Add your ${providerConfig.name} key in Settings > Keychain first (get one at ${providerConfig.apiKeyUrl}).`
+        )
+        .addComponent((el) =>
+          new SecretComponent(this.app, el)
+            .setValue(this.plugin.settings.secretNames[currentProvider] || "")
+            .onChange(async (value: string) => {
+              this.plugin.settings.secretNames[currentProvider] = value;
+              await this.plugin.saveSettings();
+            })
+        );
+    }
+
+    // Ollama URL
+    if (currentProvider === "ollama") {
+      new Setting(containerEl)
+        .setName("Ollama URL")
+        .setDesc("Base URL for your local Ollama instance.")
+        .addText((text) =>
+          text
+            .setPlaceholder("http://localhost:11434")
+            .setValue(this.plugin.settings.ollamaUrl)
+            .onChange(async (value) => {
+              this.plugin.settings.ollamaUrl = value.trim();
+              await this.plugin.saveSettings();
+            })
+        );
+    }
+
+    // Model selector
+    if (currentProvider === "ollama") {
+      // Ollama: fetch installed models dynamically
+      const modelSetting = new Setting(containerEl)
+        .setName("Model")
+        .setDesc("Loading installed Ollama models...");
+
+      this.loadOllamaModels(modelSetting);
+    } else {
+      new Setting(containerEl)
+        .setName("Model")
+        .setDesc(`${providerConfig.name} model to use for generating names.`)
+        .addDropdown((dropdown) => {
+          for (const model of providerConfig.models) {
+            dropdown.addOption(model.id, model.label);
+          }
+          dropdown
+            .setValue(this.plugin.settings.model)
+            .onChange(async (value) => {
+              this.plugin.settings.model = value;
+              await this.plugin.saveSettings();
+            });
+        });
+    }
+
+    // Test connection button
     new Setting(containerEl)
-      .setName("Model")
-      .setDesc("OpenAI model to use for generating names.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("gpt-4o-mini", "GPT-4o Mini (fast, cheap)")
-          .addOption("gpt-4o", "GPT-4o (smarter)")
-          .setValue(this.plugin.settings.model)
+      .setName("Test connection")
+      .setDesc("Send a test request to verify your settings work.")
+      .addButton((btn) =>
+        btn.setButtonText("Test").onClick(async () => {
+          btn.setDisabled(true);
+          btn.setButtonText("Testing...");
+          try {
+            const name = await this.plugin.testConnection();
+            new Notice(`Test passed! Generated name: "${name}"`);
+          } catch (err: any) {
+            new Notice(`Test failed: ${err.message}`, 10000);
+          }
+          btn.setDisabled(false);
+          btn.setButtonText("Test");
+        })
+      );
+
+    // Date prefix toggle
+    new Setting(containerEl)
+      .setName("Add date prefix")
+      .setDesc(
+        "Prepend a timestamp to the AI-generated name (e.g., 20260312-meeting-notes)."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.addDatePrefix)
           .onChange(async (value) => {
-            this.plugin.settings.model = value;
+            this.plugin.settings.addDatePrefix = value;
             await this.plugin.saveSettings();
+            this.display();
           })
       );
 
-    new Setting(containerEl)
-      .setName("Date format")
-      .setDesc("Timestamp format prepended to the AI-generated name.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("YYYYMMDD", "20260312")
-          .addOption("YYYYMMDD-HHmm", "20260312-1430")
-          .addOption("YYYY-MM-DD", "2026-03-12")
-          .setValue(this.plugin.settings.dateFormat)
-          .onChange(async (value) => {
-            this.plugin.settings.dateFormat = value;
-            await this.plugin.saveSettings();
-          })
-      );
+    if (this.plugin.settings.addDatePrefix) {
+      new Setting(containerEl)
+        .setName("Date format")
+        .setDesc("Timestamp format for the prefix.")
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("YYYYMMDD", "20260312")
+            .addOption("YYYYMMDD-HHmm", "20260312-1430")
+            .addOption("YYYY-MM-DD", "2026-03-12")
+            .setValue(this.plugin.settings.dateFormat)
+            .onChange(async (value) => {
+              this.plugin.settings.dateFormat = value;
+              await this.plugin.saveSettings();
+            })
+        );
+    }
 
+    // Max content length
     new Setting(containerEl)
       .setName("Max content length")
       .setDesc(
@@ -352,20 +528,49 @@ class AIRenamerSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
+  }
 
-    new Setting(containerEl)
-      .setName("Exclude folders")
-      .setDesc(
-        "Comma-separated folder paths to skip when renaming all (e.g., templates,daily)."
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("templates,daily")
-          .setValue(this.plugin.settings.excludeFolders)
-          .onChange(async (value) => {
-            this.plugin.settings.excludeFolders = value;
-            await this.plugin.saveSettings();
-          })
+  private async loadOllamaModels(setting: Setting): Promise<void> {
+    try {
+      const response = await requestUrl({
+        url: `${this.plugin.settings.ollamaUrl}/api/tags`,
+        method: "GET",
+      });
+      const data = response.json;
+      const models: { name: string }[] = data.models || [];
+
+      if (models.length === 0) {
+        setting.setDesc(
+          "No models installed. Run 'ollama pull <model>' in terminal, then click Refresh."
+        );
+        setting.addButton((btn) =>
+          btn.setButtonText("Refresh").onClick(() => this.display())
+        );
+        return;
+      }
+
+      setting.setDesc("Select an installed Ollama model.");
+      setting.addButton((btn) =>
+        btn.setButtonText("Refresh").onClick(() => this.display())
       );
+      setting.addDropdown((dropdown) => {
+        for (const model of models) {
+          dropdown.addOption(model.name, model.name);
+        }
+        dropdown
+          .setValue(this.plugin.settings.model)
+          .onChange(async (value) => {
+            this.plugin.settings.model = value;
+            await this.plugin.saveSettings();
+          });
+      });
+    } catch {
+      setting.setDesc(
+        "Could not connect to Ollama. Is it running?"
+      );
+      setting.addButton((btn) =>
+        btn.setButtonText("Refresh").onClick(() => this.display())
+      );
+    }
   }
 }
